@@ -1,0 +1,18 @@
+html {
+    height:100%;
+    margin: 0;
+    overflow:hidden;
+}
+
+body {
+    height:100%;
+    margin:0;
+    overflow:hidden;
+    text-align:center;
+    background:url('background.jpg') center;
+    background-size:cover;
+}
+
+#root {
+    height:100%;
+}

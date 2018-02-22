@@ -1,4 +1,5 @@
 #![recursion_limit="1024"]
+#![feature(proc_macro)]
 
 extern crate random;
 #[macro_use]
@@ -6,6 +7,7 @@ extern crate stdweb;
 #[macro_use]
 extern crate serde_derive;
 
+use stdweb::js_export;
 use std::cell::RefCell;
 
 thread_local! {
@@ -14,22 +16,9 @@ thread_local! {
 
 
 fn main() {
-    ::stdweb::initialize();
-
-    js! {
-        Module.exports.tick = @{tick};
-        Module.exports.key = @{key};
-        Module.exports.setSpeed = @{set_speed};
-    }
-
-    js! {
-        Module.exports.getNextPiece = @{get_next_piece};
-        Module.exports.getActivePiece = @{get_active_piece};
-        Module.exports.getDropPiece = @{get_drop_piece};
-        Module.exports.getBlocks = @{get_blocks};
-    }
 }
 
+#[js_export]
 fn tick() -> TickState {
     GAME_STATE.with(|g| {
         let game = &mut *g.borrow_mut();
@@ -37,6 +26,7 @@ fn tick() -> TickState {
     })
 }
 
+#[js_export]
 fn set_speed(speed: f64) {
     GAME_STATE.with(|g| {
         let game = &mut *g.borrow_mut();
@@ -45,6 +35,7 @@ fn set_speed(speed: f64) {
     });
 }
 
+#[js_export]
 fn get_next_piece() -> BlockData {
     GAME_STATE.with(|g| {
         let game = &*g.borrow();
@@ -52,6 +43,7 @@ fn get_next_piece() -> BlockData {
     })
 }
 
+#[js_export]
 fn get_active_piece() -> BlockData {
     GAME_STATE.with(|g| {
         let game = &*g.borrow();
@@ -59,6 +51,7 @@ fn get_active_piece() -> BlockData {
     })
 }
 
+#[js_export]
 fn get_drop_piece() -> BlockData {
     GAME_STATE.with(|g| {
         let game = &*g.borrow();
@@ -66,6 +59,15 @@ fn get_drop_piece() -> BlockData {
     })
 }
 
+#[js_export]
+fn get_hold_piece() -> BlockData {
+    GAME_STATE.with(|g| {
+        let game = &*g.borrow();
+        game.get_hold_piece()
+    })
+}
+
+#[js_export]
 fn get_blocks() -> BlockData {
     GAME_STATE.with(|g| {
         let game = &*g.borrow();
@@ -73,14 +75,16 @@ fn get_blocks() -> BlockData {
     })
 }
 
-fn key(key: String) {
-    let event = match &*key {
+#[js_export]
+fn key(keyPress: String) {
+    let event = match &*keyPress {
         "ArrowUp" => Some(Input::Clockwise),
         "ArrowLeft" => Some(Input::Left),
         "ArrowRight" => Some(Input::Right),
         "ArrowDown" => Some(Input::Down),
         "Shift" => Some(Input::CounterClockwise),
         "Enter" => Some(Input::Drop),
+        "\\" => Some(Input::Hold),
         _ => None,
     };
 
@@ -95,6 +99,8 @@ fn key(key: String) {
 pub struct Tetris {
     sack: PieceSack,
     next_piece: Piece,
+    hold_piece: Option<Piece>,
+    hold_cooldown: bool,
     active_piece: ActivePiece,
     events: Vec<Input>,
     board: Board,
@@ -111,6 +117,8 @@ impl Tetris {
         Self {
             active_piece: ActivePiece::new(sack.next()),
             next_piece: sack.next(),
+            hold_piece: None,
+            hold_cooldown: false,
             events: Vec::new(),
             board: Board::new(width, height),
             speed,
@@ -129,8 +137,26 @@ impl Tetris {
     }
 
     pub fn swap_piece(&mut self) {
+        self.hold_cooldown = false;
         self.active_piece = ActivePiece::new(self.next_piece);
         self.next_piece = self.sack.next();
+        self.drop_timer = self.speed;
+        if self.board.collide(&self.active_piece) {
+            self.board.clear();
+        }
+    }
+
+    pub fn hold_piece(&mut self) {
+        if self.hold_cooldown { return; }
+        self.hold_cooldown = true;
+        let tmp = self.active_piece.piece;
+        if let Some(piece) = self.hold_piece {
+            self.active_piece = ActivePiece::new(piece);
+        } else {
+            self.active_piece = ActivePiece::new(self.next_piece);
+            self.next_piece = self.sack.next();
+        }
+        self.hold_piece = Some(tmp);
         self.drop_timer = self.speed;
         if self.board.collide(&self.active_piece) {
             self.board.clear();
@@ -149,6 +175,11 @@ impl Tetris {
                 Drop => self.active_piece.drop(),
                 Clockwise => self.active_piece.rotate_clockwise(),
                 CounterClockwise => self.active_piece.rotate_counterclockwise(),
+                Hold => {
+                    self.hold_piece();
+                    frozen = true;
+                    self.active_piece
+                }
             };
 
             if piece.dropping {
@@ -234,6 +265,20 @@ impl Tetris {
     pub fn get_next_piece(&self) -> BlockData {
         let data = self.next_piece.display().iter()
             .map(|point| Block { point: *point, piece: self.next_piece })
+            .collect();
+
+        BlockData {
+            data,
+        }
+    }
+
+    pub fn get_hold_piece(&self) -> BlockData {
+        let data = self.hold_piece
+            .as_ref()
+            .map(|p| p.display())
+            .unwrap_or_else(|| vec![])
+            .iter()
+            .map(|point| Block { point: *point, piece: self.hold_piece.unwrap() })
             .collect();
 
         BlockData {
@@ -523,13 +568,13 @@ impl Piece {
     pub fn display(&self) -> Vec<Point<f64>> {
         use Piece::*;
         let offset = match *self {
-            I => point(1.0, 0.5),
-            O => point(0.5, -0.5),
-            T => point(0.0, -0.5),
-            S => point(1.0, -0.5),
-            Z => point(0.0, -0.5),
-            J => point(0.5, 0.0),
-            L => point(0.5, 0.0),
+            I => point(0.5, 0.0),
+            O => point(0.0, -1.0),
+            T => point(-0.5, -1.0),
+            S => point(0.5, -1.0),
+            Z => point(-0.5, -1.0),
+            J => point(0.0, -0.5),
+            L => point(0.0, -0.5),
         };
 
         self.shapes()[0].iter().map(|p| {
@@ -607,4 +652,5 @@ pub enum Input {
     Drop,
     Clockwise,
     CounterClockwise,
+    Hold,
 }

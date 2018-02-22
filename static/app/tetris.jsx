@@ -1,11 +1,16 @@
+import 'babel-polyfill';
 import React from 'react';
 import ReactDOM from 'react-dom';
+import blocksPng from '../assets/blocks.png';
+import webTetris from '../../Cargo.toml';
 
 const containerStyle = {
   height: '100%',
   fontFamily: "'Press Start 2P', sans-serif",
   color: '#fff',
-  display: 'inline-block'
+  display: 'inline-block',
+  textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
+  background: 'cover url("background.jpg")'
 };
 
 class Tetris extends React.Component {
@@ -14,49 +19,44 @@ class Tetris extends React.Component {
       <div style={containerStyle}>
         <PauseOverlay />
         <div style={{height:'100%', float: 'left'}}>
-          <NextPiece />
+          <PieceDisplay label="Hold" event="holdPiece" />
           <ScoreBox />
         </div>
         <div style={{height: '100%', float: 'left'}}>
           <PlayArea />
+        </div>
+        <div style={{height:'100%', float: 'left'}}>
+          <PieceDisplay label="Next" event="nextPiece" />
         </div>
       </div>
     );
   }
 }
 
-const nextPieceStyle = {
+const pieceDisplayStyle = {
   width: '200px',
   height: '200px',
   display: 'inline-block',
-  border: '#aaa ridge 4px',
-  borderRadius: '5px',
-  backgroundColor: '#000',
-  margin: '5px',
-  padding: '3px',
-  imageRendering: 'pixelated',
   textAlign: 'right'
 };
 
-class NextPiece extends React.Component {
+class PieceDisplay extends React.Component {
   constructor(props) {
     super(props);
-  }
-
-  updatePiece(piece) {
-    this.ctx.fillStyle = '#000';
-    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    this.ctx.drawImage(piece, 0, 0, piece.width, piece.height, 0, 0, this.canvas.width, this.canvas.height);
-    this.setState({});
+    this.event = props.event;
+    this.label = props.label;
   }
 
   componentDidMount() {
     this.ctx = this.canvas.getContext("2d");
-    tetris.addEventListener('nextPiece', this.updatePiece.bind(this));
+    tetris.addEventListener(this.event, (render) => (render(this.ctx)));
   }
 
   render() {
-    return <canvas width="200" height="200" ref={(canvas) => {this.canvas = canvas; }} style={nextPieceStyle} ></canvas>;
+    return <div>
+      <h2>{ this.label }</h2>
+      <canvas width="250" height="250" ref={(canvas) => {this.canvas = canvas; }} style={pieceDisplayStyle} ></canvas>
+      </div>;
   }
 }
 
@@ -75,22 +75,22 @@ class ScoreBox extends React.Component {
   }
 
   componentDidMount() {
-    tetris.addEventListener('score', this.updateScore.bind(this));
+    tetris.addEventListener('score', (score) => this.updateScore(score));
   }
 
   render() {
     return (
-      <ul style={{fontSize: '16pt', listStyle:'none', margin: '10px'}}>
-        <li><ScoreLine label="Level" value={this.state.level} /></li>
-        <li><ScoreLine label="Lines" value={this.state.lines} /></li>
-        <li><ScoreLine label="Score" value={this.state.score} /></li>
-      </ul>
+      <div style={{fontSize: '16pt', listStyle:'none', margin: '10px'}}>
+        <ScoreLine label="Level" value={this.state.level} />
+        <ScoreLine label="Lines" value={this.state.lines} />
+        <ScoreLine label="Score" value={this.state.score} />
+      </div>
     );
   }
 }
 
 const ScoreLine = ({label, value}) =>
-      <span><span>{label}</span><span style={{display: 'inline-block', minWidth: '180px', textAlign: 'right'}}>{value}</span></span>;
+      <div><div>{label}:</div><div style={{textAlign: 'right'}}>{value}</div></div>;
 
 class PauseOverlay extends React.Component {
   constructor(props) {
@@ -104,7 +104,7 @@ class PauseOverlay extends React.Component {
 
   render() {
     if (this.state.paused) {
-      return <div style={{position: 'static', width: '100%', height: '100%', backgroundColor: '#000', opacity: '0.3', lineHeight: '500px', verticalAlign: 'middle', fontSize: '40pt'}}>PAUSED</div>;
+      return <div style={{position: 'static', width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.3)', lineHeight: '500px', verticalAlign: 'middle', fontSize: '40pt'}}>PAUSED</div>;
     } else {
       return <div />;
     }
@@ -113,13 +113,11 @@ class PauseOverlay extends React.Component {
 
 const playAreaStyle = {
   width: 'auto',
-  height: 'calc(100% - 50px)',
+  height: 'calc(100% - 18px)',
   display: 'inline-block',
-  border: '#aaa ridge 4px',
+  border: '#c0c ridge 4px',
   borderRadius: '5px',
-  backgroundColor: '#000',
-  margin: '5px',
-  padding: '3px'
+  margin: '5px'
 };
 
 class PlayArea extends React.Component {
@@ -170,7 +168,7 @@ class TetrisGame {
   loadBlocks() {
     return new Promise(resolve => {
       let blocksImage = new Image();
-      blocksImage.src = 'blocks.png';
+      blocksImage.src = blocksPng;
       blocksImage.onload = () => {
         resolve(blocksImage);
       };
@@ -179,7 +177,6 @@ class TetrisGame {
 
   async init() {
     this.blocks = await this.loadBlocks();
-    this.tetris = await Rust.web_tetris;
     this.renderBackground();
     this.renderBlocks();
     this.renderNextPiece();
@@ -192,24 +189,25 @@ class TetrisGame {
     canvas.height = this.height * 20;
     this.ctx = canvas.getContext("2d");
 
-    document.addEventListener("keydown", this.input.bind(this));
-    window.requestAnimationFrame(this.tick.bind(this));
-    this.tetris.setSpeed(this.level / 20.0);
+    document.addEventListener("keydown", (key) => this.input(key));
+    window.requestAnimationFrame(() => this.tick());
+    webTetris.set_speed(this.level / 20.0);
   }
 
   tick() {
     if (!this.pause) {
-      const update = this.tetris.tick();
+      const update = webTetris.tick();
       this.updateScore(update.lines);
       if (update.frozen) {
         this.renderBlocks();
         this.renderNextPiece();
+        this.renderHoldPiece();
       }
       this.renderPieces();
     }
 
     if (!this.stopping) {
-      window.requestAnimationFrame(this.tick.bind(this));
+      window.requestAnimationFrame(() => this.tick());
     }
   }
 
@@ -240,9 +238,9 @@ class TetrisGame {
       if (this.level != newLevel) {
         this.level = newLevel;
         if (this.level <= 20) {
-          this.tetris.setSpeed(this.level / 20.0);
+          webTetris.set_speed(this.level / 20.0);
         } else {
-          this.tetris.setSpeed(1);
+          webTetris.set_speed(1);
         }
       }
       this.trigger("score", {score: this.score, lines: this.lines, level: this.level});
@@ -257,7 +255,7 @@ class TetrisGame {
       this.lines += 10;
     }
     if (!this.pause) {
-      this.tetris.key(input.key);
+      webTetris.key(input.key);
     }
   }
 
@@ -274,6 +272,7 @@ class TetrisGame {
     canvas.width = this.width * 10;
     canvas.height = this.height * 20;
     let ctx = canvas.getContext('2d');
+    ctx.globalAlpha = 0.95;
     for(let x = 0; x < 10; x++) {
       for(let y = 0; y < 20; y++) {
         ctx.drawImage(this.blocks, 7 * 50, 0, 50, 50, x * this.width, y * this.height, this.width, this.height);
@@ -284,67 +283,126 @@ class TetrisGame {
   }
 
   renderBlocks() {
-    let blocks = this.tetris.getBlocks();
-    let canvas = document.createElement("canvas");
-    canvas.width = this.width * 10;
-    canvas.height = this.height * 20;
-    let ctx = canvas.getContext('2d');
+    if (!this.blocksCtx) {
+      let canvas = document.createElement("canvas");
+      canvas.width = this.width * 10;
+      canvas.height = this.height * 20;
+      this.blocksCtx = canvas.getContext('2d');
+    }
+    let blocks = webTetris.get_blocks();
 
-    ctx.drawImage(this.backgroundCanvas, 0, 0);
+    this.blocksCtx.clearRect(0, 0, this.blocksCtx.canvas.width, this.blocksCtx.canvas.height);
+    this.blocksCtx.drawImage(this.backgroundCanvas, 0, 0);
 
-    this.drawBlocks(ctx, blocks);
-
-    this.blocksCanvas = canvas;
+    this.drawBlocks(this.blocksCtx, blocks, "#fff");
   }
 
   renderPieces() {
-    let piece = this.tetris.getActivePiece();
-    let dropPiece = this.tetris.getDropPiece();
-    this.ctx.drawImage(this.blocksCanvas, 0, 0);
+    let piece = webTetris.get_active_piece();
+    let dropPiece = webTetris.get_drop_piece();
+    this.ctx.clearRect(0, 0, this.ctx.canvas.width, this.ctx.canvas.height);
+    this.ctx.drawImage(this.blocksCtx.canvas, 0, 0);
 
     this.ctx.globalAlpha = 0.33;
-    this.drawBlocks(this.ctx, dropPiece);
+    this.drawBlocks(this.ctx, dropPiece, false);
 
+    let color = this.getSkirtColor(piece.data[0]);
     this.ctx.globalAlpha = 1;
-    this.drawBlocks(this.ctx, piece);
+    this.drawBlocks(this.ctx, piece, color);
   }
 
   renderNextPiece() {
-    let piece = this.tetris.getNextPiece();
-    let canvas = document.createElement("canvas");
-    canvas.width = this.width * 5;
-    canvas.height = this.height * 5;
-    let ctx = canvas.getContext('2d');
+    let fn = (ctx) => {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-    this.drawBlocks(ctx, piece);
+      let piece = webTetris.get_next_piece();
+      piece.data.forEach(p => { p.point.x += 0.5; p.point.y += 0.5; });
 
-    this.trigger("nextPiece", canvas);
+      let color = this.getSkirtColor(piece.data[0]);
+      this.drawBlocks(ctx, piece, color);
+    };
+
+    this.trigger("nextPiece", fn);
   }
 
-  drawBlocks(ctx, blocks) {
+  renderHoldPiece() {
+    let fn = (ctx) => {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+      let piece = webTetris.get_hold_piece();
+      piece.data.forEach(p => { p.point.x += 0.5; p.point.y += 0.5; });
+
+      if (piece.data.length > 0) {
+        let color = this.getSkirtColor(piece.data[0]);
+        this.drawBlocks(ctx, piece, color);
+      }
+    };
+
+    this.trigger("holdPiece", fn);
+  }
+
+  drawBlocks(ctx, blocks, skirtColor) {
+    ctx.fillStyle = skirtColor;
+    let skirtSize = 5;
+    for (let i = 0; i < blocks.data.length && skirtColor; i++) {
+      let block = blocks.data[i];
+      ctx.fillRect((block.point.x * this.width) - skirtSize,
+                   (block.point.y * this.height) - skirtSize,
+                   this.width + (skirtSize * 2),
+                   this.height + (skirtSize * 2));
+    }
     for (let i = 0; i < blocks.data.length; i++) {
       let block = blocks.data[i];
       let offset = this.getSpriteData(block);
-      ctx.drawImage(this.blocks, offset * 50, 0, 50, 50, block.point.x * this.width, block.point.y * this.height, this.width, this.height);
+      ctx.drawImage(this.blocks,
+                    offset * 50,
+                    0,
+                    50,
+                    50,
+                    block.point.x * this.width,
+                    block.point.y * this.height,
+                    this.width,
+                    this.height);
+    }
+  }
+
+  getSkirtColor(block) {
+    switch(block.piece) {
+    case "T":
+      return "#d8f";
+    case "S":
+      return "#8f8";
+    case "I":
+      return "#8ff";
+    case "Z":
+      return "#f88";
+    case "L":
+      return "#fd8";
+    case "J":
+      return "#88f";
+    case "O":
+      return "#ff8";
+    default:
+      throw "Invalid Block Type " + block.piece;
     }
   }
 
   getSpriteData(block) {
     switch(block.piece) {
     case "T":
-      return 0;
-    case "S":
-      return 1;
-    case "I":
-      return 2;
-    case "Z":
-      return 3;
-    case "L":
-      return 4;
-    case "J":
-      return 5;
-    case "O":
       return 6;
+    case "S":
+      return 0;
+    case "I":
+      return 3;
+    case "Z":
+      return 2;
+    case "L":
+      return 5;
+    case "J":
+      return 4;
+    case "O":
+      return 1;
     default:
       throw "Invalid Block Type " + block.piece;
     }
